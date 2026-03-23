@@ -16,10 +16,8 @@ endif()
 
 if("${CMAKE_GENERATOR_PLATFORM}" STREQUAL "arm64" OR "${TARGET_PLATFORM}" STREQUAL "arm64")
     set(TARGET_PLATFORM "arm64")
-    set(TEST_DISTRO_PLATFORM "arm64")
 elseif("${CMAKE_GENERATOR_PLATFORM}" MATCHES "x64|amd64" OR "${TARGET_PLATFORM}" MATCHES "x64|amd64")
     set(TARGET_PLATFORM "x64")
-    set(TEST_DISTRO_PLATFORM "amd64")
 else()
     message(FATAL_ERROR "Unsupported platform: ${CMAKE_GENERATOR_PLATFORM}")
 endif()
@@ -250,13 +248,19 @@ set(COMMON_LINK_LIBRARIES
     Shlwapi.lib
     synchronization.lib
     Bcrypt.lib
-    Iphlpapi.lib
-    icu.lib
+    icu.lib)
+
+set(MSI_LINK_LIBRARIES
+    Wintrust.lib
+    msi.lib)
+
+set(HCS_LINK_LIBRARIES
     computecore.lib
     computenetwork.lib
+    Iphlpapi.lib)
+
+set(SERVICE_LINK_LIBRARIES
     MI.lib
-    Wintrust.lib
-    msi.lib
     wsldeps.lib)
 
 # Linux
@@ -383,6 +387,7 @@ set(LINUX_LDFLAGS -target ${LLVM_TARGET}
                   -static)
 
 set(COMMON_LINUX_LINK_LIBRARIES configfile)
+file(GLOB COMMON_LINUX_HEADERS CONFIGURE_DEPENDS "${CMAKE_CURRENT_LIST_DIR}/src/shared/inc/*.h")
 
 if(DEFINED ENV{WSL_DEV_BINARY_PATH})
     set(WSL_DEV_BINARY_PATH $ENV{WSL_DEV_BINARY_PATH})
