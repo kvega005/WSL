@@ -26,6 +26,14 @@ Abstract:
 #include "versionhelpers.h"
 #include <regstr.h>
 
+// Version numbers for various functionality that was backported.
+
+#define VIRTIO_SERIAL_CONSOLE_COBALT_RELEASE_UBR 40
+#define NICKEL_BUILD_FLOOR 22350
+#define VMEMM_SUFFIX_COBALT_REFRESH_BUILD_NUMBER 22138
+#define VMMEM_SUFFIX_COBALT_RELEASE_UBR 71
+#define VMMEM_SUFFIX_NICKEL_BUILD_NUMBER 22420
+
 using wsl::windows::common::helpers::LaunchWslRelayFlags;
 
 constexpr auto c_WslSupportInterfaceKey = L"Software\\Classes\\Interface\\{46f3c96d-ffa3-42f0-b052-52f5e7ecbb08}";
@@ -215,7 +223,7 @@ void wsl::windows::common::helpers::ConnectPipe(_In_ HANDLE Pipe, _In_ DWORD Tim
             }
 
             const auto Result = WaitForMultipleObjects(gsl::narrow_cast<DWORD>(WaitHandles.size()), WaitHandles.data(), FALSE, Timeout);
-            if (!ExitEvents.empty() && Result > WAIT_OBJECT_0 && Result <= WAIT_OBJECT_0 + WaitHandles.size())
+            if (!ExitEvents.empty() && Result > WAIT_OBJECT_0 && Result < WAIT_OBJECT_0 + WaitHandles.size())
             {
                 THROW_HR(E_ABORT);
             }
@@ -372,7 +380,7 @@ std::string wsl::windows::common::helpers::GetLinuxTimezone(_In_opt_ HANDLE User
 
         THROW_HR_IF_MSG(E_FAIL, (U_FAILURE(status) != false), "%hs", u_errorName(status));
 
-        timezone.resize(buffer.size());
+        timezone.resize(size);
         u_UCharsToChars(buffer.data(), timezone.data(), static_cast<int32_t>(timezone.size()));
     }
     CATCH_LOG()
@@ -465,6 +473,52 @@ bool wsl::windows::common::helpers::IsServicePresent(_In_ LPCWSTR ServiceName)
 
     const wil::unique_schandle service{OpenService(manager.get(), ServiceName, SERVICE_QUERY_CONFIG)};
     return !!service;
+}
+
+bool wsl::windows::common::helpers::IsServiceRunning(_In_ LPCWSTR ServiceName)
+{
+    const wil::unique_schandle manager{OpenSCManager(nullptr, nullptr, SC_MANAGER_CONNECT)};
+    if (!manager)
+    {
+        return false;
+    }
+
+    const wil::unique_schandle service{OpenServiceW(manager.get(), ServiceName, SERVICE_QUERY_STATUS)};
+    if (!service)
+    {
+        return false;
+    }
+
+    SERVICE_STATUS status;
+    if (!QueryServiceStatus(service.get(), &status))
+    {
+        return false;
+    }
+
+    return status.dwCurrentState != SERVICE_STOPPED;
+}
+
+bool wsl::windows::common::helpers::IsVirtioSerialConsoleSupported()
+{
+    // See if the Windows version has the required platform change.
+    //
+    // N.B. If the package is running on a vibranium or iron build, then it means that lifted
+    //      support is available, so virtio serial is available as well (since it was done in the same LCU).
+
+    auto windowsVersion = GetWindowsVersion();
+    return windowsVersion.BuildNumber != WindowsBuildNumbers::Cobalt ||
+           windowsVersion.UpdateBuildRevision >= VIRTIO_SERIAL_CONSOLE_COBALT_RELEASE_UBR;
+}
+
+bool wsl::windows::common::helpers::IsVmemmSuffixSupported()
+{
+    auto windowsVersion = GetWindowsVersion();
+
+    // See if the Windows version has the required platform change.
+    return (
+        (windowsVersion.BuildNumber >= VMMEM_SUFFIX_NICKEL_BUILD_NUMBER) ||
+        ((windowsVersion.BuildNumber < NICKEL_BUILD_FLOOR) && (windowsVersion.BuildNumber >= VMEMM_SUFFIX_COBALT_REFRESH_BUILD_NUMBER)) ||
+        ((windowsVersion.BuildNumber == WindowsBuildNumbers::Cobalt) && (windowsVersion.UpdateBuildRevision >= VMMEM_SUFFIX_COBALT_RELEASE_UBR)));
 }
 
 bool wsl::windows::common::helpers::IsWindows11OrAbove()
@@ -658,3 +712,21 @@ bool wsl::windows::common::helpers::TryAttachConsole()
 
     return ReopenStdHandles();
 }
+
+void wsl::windows::common::helpers::RegisterWithDcat(_In_ bool IncludeVersionNumber)
+try
+{
+    std::wstring registeredVersion;
+    if (IncludeVersionNumber)
+    {
+        registeredVersion.assign(TEXT(WSL_PACKAGE_VERSION));
+    }
+    else
+    {
+        registeredVersion.assign(L"0.0.0.0");
+    }
+
+    wil::unique_hkey dcatKey = wsl::windows::common::registry::CreateKey(HKEY_LOCAL_MACHINE, TEXT(DCAT_REGISTRATION_KEY), KEY_SET_VALUE);
+    wsl::windows::common::registry::WriteString(dcatKey.get(), nullptr, L"Version", registeredVersion.c_str());
+}
+CATCH_LOG()
