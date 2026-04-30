@@ -32,6 +32,20 @@ class WSLCContainer;
 class WSLCSession;
 class WSLCVolumes;
 
+class unique_com_disconnect
+{
+public:
+    NON_COPYABLE(unique_com_disconnect);
+    DEFAULT_MOVABLE(unique_com_disconnect);
+
+    unique_com_disconnect() = default;
+    unique_com_disconnect(Microsoft::WRL::ComPtr<WSLCContainer>&& wrapper) noexcept;
+    ~unique_com_disconnect() noexcept;
+
+private:
+    Microsoft::WRL::ComPtr<WSLCContainer> m_wrapper;
+};
+
 struct ContainerPortMapping
 {
     NON_COPYABLE(ContainerPortMapping);
@@ -129,19 +143,19 @@ public:
         IORelay& Relay);
 
 private:
-    __requires_exclusive_lock_held(m_lock) void DeleteExclusiveLockHeld(WSLCDeleteFlags Flags);
+    __requires_exclusive_lock_held(m_lock) [[nodiscard]] unique_com_disconnect DeleteExclusiveLockHeld(WSLCDeleteFlags Flags);
 
     void AllocateBridgedModePorts();
     void OnEvent(ContainerEvent event, std::optional<int> exitCode, std::uint64_t eventTime);
 
     bool WaitForEvent(const wil::unique_event& Event, std::chrono::milliseconds Timeout) const;
 
-    __requires_exclusive_lock_held(m_lock) void ReleaseResources();
+    __requires_exclusive_lock_held(m_lock) [[nodiscard]] unique_com_disconnect ReleaseResources();
     __requires_exclusive_lock_held(m_lock) void ReleaseRuntimeResources();
     __requires_exclusive_lock_held(m_lock) void ReleaseProcesses();
-    __requires_exclusive_lock_held(m_lock) void DisconnectComWrapper();
+    __requires_exclusive_lock_held(m_lock) [[nodiscard]] unique_com_disconnect PrepareDisconnectComWrapper();
 
-    __requires_exclusive_lock_held(m_lock) void OnStopped(std::optional<std::uint64_t> stopTimestamp);
+    __requires_exclusive_lock_held(m_lock) [[nodiscard]] unique_com_disconnect OnStopped(std::optional<std::uint64_t> stopTimestamp);
 
     void SetExitCode(int ExitCode) noexcept;
     void SignalInitProcessExit() noexcept;
@@ -218,7 +232,7 @@ public:
     IFACEMETHOD(InterfaceSupportsErrorInfo)(REFIID riid);
 
     // Cache read-only properties so they remain accessible after the impl is disconnected.
-    // Called from WSLCContainerImpl::DisconnectComWrapper() while m_lock is held exclusively.
+    // Called from WSLCContainerImpl::PrepareDisconnectComWrapper() while m_lock is held exclusively.
     void CacheState(const std::string& id, const std::string& name, WSLCContainerState state, const Microsoft::WRL::ComPtr<IWSLCProcess>& initProcess) noexcept;
 
 private:
