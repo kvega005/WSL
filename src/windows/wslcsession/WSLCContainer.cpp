@@ -694,7 +694,8 @@ void WSLCContainerImpl::Start(WSLCContainerStartFlags Flags, LPCSTR DetachKeys)
 
 void WSLCContainerImpl::OnEvent(ContainerEvent event, std::optional<int> exitCode, std::uint64_t eventTime)
 {
-    // N.B. comWrapper must be destructed after m_lock and m_stopLock are released.
+    // We must release m_lock and m_stopLock before the wrapper's destructor calls
+    // Disconnect(), so in-flight COM callers can drain from COMImplClass::m_callers.
     unique_com_disconnect comWrapper;
 
     if (event == ContainerEvent::Stop)
@@ -714,18 +715,10 @@ void WSLCContainerImpl::OnEvent(ContainerEvent event, std::optional<int> exitCod
         }
 
         auto lock = m_lock.lock_exclusive();
-
         comWrapper = OnStopped(eventTime);
-
-        // Release m_lock and m_stopLock before the wrapper's destructor calls
-        // Disconnect(), so in-flight COM callers can drain from COMImplClass::m_callers.
-        lock.reset();
-        stopGuard.unlock();
     }
     else if (event == ContainerEvent::Destroy)
     {
-        SignalInitProcessExit();
-
         WI_ASSERT(!m_destroyEvent.is_signaled());
         m_destroyEvent.SetEvent();
 
@@ -736,6 +729,10 @@ void WSLCContainerImpl::OnEvent(ContainerEvent event, std::optional<int> exitCod
             Transition(WslcContainerStateDeleted, eventTime);
             comWrapper = ReleaseResources();
         }
+
+        // Signal init exit after the state transition so awaiters observe state=Deleted
+        // (and any post-delete cleanup) rather than the prior Running/Exited state.
+        SignalInitProcessExit();
     }
 
     WSL_LOG(
@@ -863,14 +860,14 @@ void WSLCContainerImpl::Delete(WSLCDeleteFlags Flags)
     {
         auto lock = m_lock.lock_exclusive();
         wrapper = DeleteExclusiveLockHeld(Flags);
-    }
 
-    // Wait for the docker destroy event so anonymous volume cleanup is reflected in tracking by
-    // the time we return. Safe to wait here: OnEvent() signals m_destroyEvent before
-    // taking m_lock. Callers on the docker event-loop thread (OnEvent) must not wait.
-    if (WI_IsFlagSet(Flags, WSLCDeleteFlagsDeleteVolumes))
-    {
-        m_wslcSession.WaitForEventOrSessionTerminating(m_destroyEvent.get(), 60s);
+        // Wait for the docker destroy event so anonymous volume cleanup is reflected in tracking by
+        // the time we return. Safe to wait here: OnEvent() signals m_destroyEvent before
+        // taking m_lock. Callers on the docker event-loop thread (OnEvent) must not wait.
+        if (WI_IsFlagSet(Flags, WSLCDeleteFlagsDeleteVolumes))
+        {
+            m_wslcSession.WaitForEventOrSessionTerminating(m_destroyEvent.get(), 60s);
+        }
     }
 }
 
