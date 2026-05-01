@@ -203,6 +203,15 @@ struct PortMapping
     NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(PortMapping, HostIp, HostPort);
 };
 
+struct Ulimit
+{
+    std::string Name;
+    std::int64_t Soft{};
+    std::int64_t Hard{};
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(Ulimit, Name, Soft, Hard);
+};
+
 struct HostConfig
 {
     std::vector<Mount> Mounts;
@@ -216,7 +225,13 @@ struct HostConfig
     std::map<std::string, std::string> Tmpfs;
     std::vector<DeviceMapping> Devices;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(HostConfig, Mounts, PortBindings, NetworkMode, Init, Dns, DnsSearch, DnsOptions, Binds, Tmpfs, Devices);
+    // Per-container resource limits. 0 means "no limit" (Docker default).
+    std::int64_t Memory{};
+    std::int64_t NanoCpus{};
+    std::optional<std::vector<Ulimit>> Ulimits;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE_WITH_DEFAULT(
+        HostConfig, Mounts, PortBindings, NetworkMode, Init, Dns, DnsSearch, DnsOptions, Binds, Tmpfs, Devices, Memory, NanoCpus, Ulimits);
 };
 
 struct CreateContainer

@@ -7193,6 +7193,115 @@ class WSLCTests
         }
     }
 
+    WSLC_TEST_METHOD(ContainerResourceLimits)
+    {
+        // Validate per-container memory limit is applied (cgroup v2: /sys/fs/cgroup/memory.max).
+        {
+            constexpr std::int64_t memoryBytes = 64 * 1024 * 1024; // 64 MiB
+            WSLCContainerLauncher launcher("debian:latest", "test-container-memory-limit", {"cat", "/sys/fs/cgroup/memory.max"});
+            launcher.SetMemoryLimit(memoryBytes);
+
+            ValidateContainerOutput(launcher, {{1, std::format("{}\n", memoryBytes)}});
+        }
+
+        // Validate per-container CPU quota is applied (cgroup v2: /sys/fs/cgroup/cpu.max).
+        // NanoCpus = 1.5 * 1e9 -> quota=150000 period=100000.
+        {
+            constexpr std::int64_t nanoCpus = 1'500'000'000ll;
+            WSLCContainerLauncher launcher("debian:latest", "test-container-cpu-limit", {"cat", "/sys/fs/cgroup/cpu.max"});
+            launcher.SetNanoCpus(nanoCpus);
+
+            ValidateContainerOutput(launcher, {{1, "150000 100000\n"}});
+        }
+
+        // Validate ulimit (nofile) is applied to the init process.
+        {
+            WSLCContainerLauncher launcher("debian:latest", "test-container-ulimit", {"sh", "-c", "ulimit -Sn; ulimit -Hn"});
+            launcher.AddUlimit("nofile", 1234, 5678);
+
+            ValidateContainerOutput(launcher, {{1, "1234\n5678\n"}});
+        }
+
+        // Validate that the configured limits are reported back via container.Inspect().
+        {
+            constexpr std::int64_t memoryBytes = 64 * 1024 * 1024;
+            constexpr std::int64_t nanoCpus = 500'000'000ll;
+
+            WSLCContainerLauncher launcher("debian:latest", "test-container-limits-inspect", {"true"});
+            launcher.SetMemoryLimit(memoryBytes);
+            launcher.SetNanoCpus(nanoCpus);
+            launcher.AddUlimit("nofile", 1234, 5678);
+
+            auto container = launcher.Create(*m_defaultSession);
+            auto hostConfig = container.Inspect().HostConfig;
+
+            VERIFY_ARE_EQUAL(memoryBytes, hostConfig.Memory);
+            VERIFY_ARE_EQUAL(nanoCpus, hostConfig.NanoCpus);
+            VERIFY_ARE_EQUAL(static_cast<size_t>(1), hostConfig.Ulimits.size());
+            VERIFY_ARE_EQUAL(std::string("nofile"), hostConfig.Ulimits[0].Name);
+            VERIFY_ARE_EQUAL(1234ll, hostConfig.Ulimits[0].Soft);
+            VERIFY_ARE_EQUAL(5678ll, hostConfig.Ulimits[0].Hard);
+        }
+
+        // Validate inspect defaults when no limits are configured: Memory/NanoCpus are 0 ("no limit") and Ulimits is empty.
+        {
+            WSLCContainerLauncher launcher("debian:latest", "test-container-limits-inspect-defaults", {"true"});
+
+            auto container = launcher.Create(*m_defaultSession);
+            auto hostConfig = container.Inspect().HostConfig;
+
+            VERIFY_ARE_EQUAL(0ll, hostConfig.Memory);
+            VERIFY_ARE_EQUAL(0ll, hostConfig.NanoCpus);
+            VERIFY_IS_TRUE(hostConfig.Ulimits.empty());
+        }
+
+        // Validate that multiple ulimits round-trip through inspect in the order they were configured.
+        {
+            WSLCContainerLauncher launcher("debian:latest", "test-container-limits-inspect-multi", {"true"});
+            launcher.AddUlimit("nofile", 1234, 5678);
+            launcher.AddUlimit("nproc", 100, 200);
+
+            auto container = launcher.Create(*m_defaultSession);
+            auto ulimits = container.Inspect().HostConfig.Ulimits;
+
+            VERIFY_ARE_EQUAL(static_cast<size_t>(2), ulimits.size());
+            VERIFY_ARE_EQUAL(std::string("nofile"), ulimits[0].Name);
+            VERIFY_ARE_EQUAL(1234ll, ulimits[0].Soft);
+            VERIFY_ARE_EQUAL(5678ll, ulimits[0].Hard);
+            VERIFY_ARE_EQUAL(std::string("nproc"), ulimits[1].Name);
+            VERIFY_ARE_EQUAL(100ll, ulimits[1].Soft);
+            VERIFY_ARE_EQUAL(200ll, ulimits[1].Hard);
+        }
+
+        // Validate that UlimitsCount > 0 with a null Ulimits pointer is rejected.
+        {
+            WSLCContainerOptions options{};
+            options.Image = "debian:latest";
+            options.Name = "test-ulimits-null-array";
+            options.Ulimits = nullptr;
+            options.UlimitsCount = 1;
+
+            wil::com_ptr<IWSLCContainer> container;
+            auto hr = m_defaultSession->CreateContainer(&options, &container);
+            VERIFY_ARE_EQUAL(hr, E_INVALIDARG);
+        }
+
+        // Validate that a Ulimit entry with a null Name is rejected.
+        {
+            WSLCUlimit ulimit{.Name = nullptr, .Soft = 1, .Hard = 1};
+
+            WSLCContainerOptions options{};
+            options.Image = "debian:latest";
+            options.Name = "test-ulimit-null-name";
+            options.Ulimits = &ulimit;
+            options.UlimitsCount = 1;
+
+            wil::com_ptr<IWSLCContainer> container;
+            auto hr = m_defaultSession->CreateContainer(&options, &container);
+            VERIFY_ARE_EQUAL(hr, E_INVALIDARG);
+        }
+    }
+
     WSLC_TEST_METHOD(ContainerAttach)
     {
         // Validate attach behavior in a non-tty process.

@@ -1108,6 +1108,17 @@ WslcInspectContainer WSLCContainerImpl::BuildInspectContainer(const DockerInspec
     wslcInspect.State.FinishedAt = dockerInspect.State.FinishedAt;
 
     wslcInspect.HostConfig.NetworkMode = dockerInspect.HostConfig.NetworkMode;
+    wslcInspect.HostConfig.Memory = dockerInspect.HostConfig.Memory;
+    wslcInspect.HostConfig.NanoCpus = dockerInspect.HostConfig.NanoCpus;
+
+    if (dockerInspect.HostConfig.Ulimits.has_value())
+    {
+        wslcInspect.HostConfig.Ulimits.reserve(dockerInspect.HostConfig.Ulimits->size());
+        for (const auto& ulimit : dockerInspect.HostConfig.Ulimits.value())
+        {
+            wslcInspect.HostConfig.Ulimits.push_back({ulimit.Name, ulimit.Soft, ulimit.Hard});
+        }
+    }
 
     // Map WSLC port mappings (Windows host ports only). HostIp is not set here and will use
     // the default value ("127.0.0.1") defined in the InspectPortBinding schema.
@@ -1262,6 +1273,27 @@ std::unique_ptr<WSLCContainerImpl> WSLCContainerImpl::Create(
     }
 
     request.HostConfig.Init = WI_IsFlagSet(containerOptions.Flags, WSLCContainerFlagsInit);
+
+    request.HostConfig.Memory = containerOptions.MemoryBytes;
+    request.HostConfig.NanoCpus = containerOptions.NanoCpus;
+
+    if (containerOptions.UlimitsCount > 0)
+    {
+        THROW_HR_IF_NULL_MSG(E_INVALIDARG, containerOptions.Ulimits, "Ulimits is null with UlimitsCount=%lu", containerOptions.UlimitsCount);
+
+        std::vector<wsl::windows::common::docker_schema::Ulimit> ulimits;
+        ulimits.reserve(containerOptions.UlimitsCount);
+
+        for (ULONG i = 0; i < containerOptions.UlimitsCount; i++)
+        {
+            const auto& ulimit = containerOptions.Ulimits[i];
+            THROW_HR_IF_NULL_MSG(E_INVALIDARG, ulimit.Name, "Ulimits[%lu].Name is null", i);
+
+            ulimits.push_back({ulimit.Name, ulimit.Soft, ulimit.Hard});
+        }
+
+        request.HostConfig.Ulimits = std::move(ulimits);
+    }
 
     if (containerOptions.VolumesCount > 0)
     {
