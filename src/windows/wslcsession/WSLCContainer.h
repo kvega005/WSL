@@ -148,8 +148,6 @@ private:
     void AllocateBridgedModePorts();
     void OnEvent(ContainerEvent event, std::optional<int> exitCode, std::uint64_t eventTime);
 
-    bool WaitForEvent(const wil::unique_event& Event, std::chrono::milliseconds Timeout) const;
-
     __requires_exclusive_lock_held(m_lock) [[nodiscard]] unique_com_disconnect ReleaseResources();
     __requires_exclusive_lock_held(m_lock) void ReleaseRuntimeResources();
     __requires_exclusive_lock_held(m_lock) void ReleaseProcesses();
