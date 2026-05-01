@@ -865,7 +865,7 @@ __requires_exclusive_lock_held(m_lock) unique_com_disconnect WSLCContainerImpl::
     }
 
     // For the Rm path, defer init-exit signaling to OnEvent(Destroy) so callers waiting
-    // on init exit observe destroy-side cleanup (e.g. anonymous volume tracking) first.
+    // on init exit observe destroy-side cleanup first.
     if (WI_IsFlagClear(m_containerFlags, WSLCContainerFlagsRm))
     {
         SignalInitProcessExit();
