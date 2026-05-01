@@ -351,6 +351,29 @@ void ProcessNamedVolumes(const WSLCContainerOptions& containerOptions, wsl::wind
     }
 }
 
+void ConfigureLdPathForGpu(std::vector<std::string>& Env)
+{
+    static constexpr std::string_view ldLibraryPathPrefix = "LD_LIBRARY_PATH=";
+    auto it = std::ranges::find_if(Env, [](const std::string& e) { return e.starts_with(ldLibraryPathPrefix); });
+
+    if (it != Env.end())
+    {
+        // If the user already has an LD_LIBRARY_PATH, append the GPU library paths to it.
+        auto ldPath = it->substr(ldLibraryPathPrefix.size());
+        if (!ldPath.empty() && !ldPath.ends_with(":"))
+        {
+            it->append(":");
+        }
+
+        it->append(WSLCVirtualMachine::c_gpuLibrariesPath);
+    }
+    else
+    {
+        // Otherwise create a new entry.
+        Env.emplace_back(std::format("LD_LIBRARY_PATH={}", WSLCVirtualMachine::c_gpuLibrariesPath));
+    }
+}
+
 } // namespace
 
 ContainerPortMapping::ContainerPortMapping(VMPortMapping&& VmMapping, uint16_t ContainerPort) :
@@ -1002,6 +1025,11 @@ void WSLCContainerImpl::Exec(const WSLCProcessOptions* Options, LPCSTR DetachKey
         request.DetachKeys = DetachKeys;
     }
 
+    if (WI_IsFlagSet(m_containerFlags, WSLCContainerFlagsGpu))
+    {
+        ConfigureLdPathForGpu(request.Env);
+    }
+
     try
     {
         auto result = m_dockerClient.CreateExec(m_id, request);
@@ -1323,6 +1351,27 @@ std::unique_ptr<WSLCContainerImpl> WSLCContainerImpl::Create(
     }
 
     ProcessNamedVolumes(containerOptions, request);
+
+    // Configure GPU support if requested.
+    if (WI_IsFlagSet(containerOptions.Flags, WSLCContainerFlagsGpu))
+    {
+        THROW_HR_IF_MSG(
+            HRESULT_FROM_WIN32(ERROR_NOT_SUPPORTED),
+            !virtualMachine.FeatureEnabled(WslcFeatureFlagsGPU),
+            "WSLCContainerFlagsGpu requires GPU support enabled on the session");
+
+        if (!request.HostConfig.Binds.has_value())
+        {
+            request.HostConfig.Binds = std::vector<std::string>{};
+        }
+
+        request.HostConfig.Binds->push_back(std::format("{0}:{0}:ro", WSLCVirtualMachine::c_gpuLibrariesPath));
+        request.HostConfig.Binds->push_back(std::format("{0}:{0}:ro", WSLCVirtualMachine::c_gpuDriversPath));
+
+        request.HostConfig.Devices.push_back({"/dev/dxg", "/dev/dxg", "rwm"});
+
+        ConfigureLdPathForGpu(request.Env);
+    }
 
     // Prepare port mappings from container options.
     std::vector<_WSLCPortMapping> ports;

@@ -100,7 +100,9 @@ private:
         Settings.MaximumStorageSizeMb = userSettings.Get<settings::Setting::SessionStorageSizeMb>();
         Settings.BootTimeoutMs = wsl::windows::wslc::DefaultBootTimeoutMs;
         Settings.NetworkingMode = userSettings.Get<settings::Setting::SessionNetworkingMode>();
-        Settings.FeatureFlags = WslcFeatureFlagsNone;
+
+        // TODO: Add a config setting to opt-out of GPU support.
+        Settings.FeatureFlags = WslcFeatureFlagsGPU;
         WI_SetFlagIf(Settings.FeatureFlags, WslcFeatureFlagsDnsTunneling, userSettings.Get<settings::Setting::SessionDnsTunneling>());
         WI_SetFlagIf(
             Settings.FeatureFlags,
