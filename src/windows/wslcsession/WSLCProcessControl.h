@@ -50,11 +50,7 @@ public:
     void OnContainerReleased() noexcept;
 
     // Records the exit code observed from Docker. Idempotent: first call wins.
-    // Does not signal the exit event; call SignalExit() once the caller is ready
-    // for clients waiting on the exit event to unblock.
     void SetExitCode(int ExitCode);
-
-    // Signals the exit event. No-op if already signaled or if no exit code has been set.
     void SignalExit();
 
 private:
