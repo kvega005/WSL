@@ -477,22 +477,30 @@ void WslCoreVm::Initialize(const GUID& VmId, const wil::shared_handle& UserToken
     {
         std::promise<bool> initialResult;
         m_drvfsInitialResult = initialResult.get_future();
-        auto guestDeviceLock = m_guestDeviceLock.lock_exclusive();
-        std::thread([this, guestDeviceLock = std::move(guestDeviceLock), initialResult = std::move(initialResult)]() mutable {
+
+        std::promise<void> lockAcquired;
+        auto lockAcquiredFuture = lockAcquired.get_future();
+        m_drvfsInitialThread = std::thread([this, lockAcquired = std::move(lockAcquired), initialResult = std::move(initialResult)]() mutable {
+            auto guestDeviceLock = m_guestDeviceLock.lock_exclusive();
             try
             {
+                lockAcquired.set_value();
                 wsl::windows::common::wslutil::SetThreadDescription(L"InitializeDrvfs");
                 initialResult.set_value(InitializeDrvFsLockHeld(m_userToken.get()));
             }
             catch (...)
             {
+                LOG_CAUGHT_EXCEPTION();
+
                 try
                 {
                     initialResult.set_exception(std::current_exception());
                 }
                 CATCH_LOG()
             }
-        }).detach();
+        });
+
+        lockAcquiredFuture.get();
     }
 
     // Mount the system distro.
@@ -632,8 +640,14 @@ void WslCoreVm::Initialize(const GUID& VmId, const wil::shared_handle& UserToken
             }
             else if (m_vmConfig.NetworkingMode == NetworkingMode::Consomme)
             {
-                wsl::core::ConsommeNetworkingFlags flags =
-                    wsl::core::ConsommeNetworkingFlags::Ipv6 | wsl::core::ConsommeNetworkingFlags::LoopbackClientIp;
+                const auto kernelModules = wsl::shared::string::Split(m_vmConfig.KernelModulesList, L',');
+                wsl::core::ConsommeNetworkingFlags flags = wsl::core::ConsommeNetworkingFlags::LoopbackClientIp;
+                // For CONFIG_IPV6=m, the module-list fallback assumes the user does not disable IPv6
+                // while also requesting that the ipv6 module be loaded.
+                WI_SetFlagIf(
+                    flags,
+                    wsl::core::ConsommeNetworkingFlags::Ipv6,
+                    m_ipv6Available || std::find(kernelModules.begin(), kernelModules.end(), L"ipv6") != kernelModules.end());
                 WI_SetFlagIf(flags, wsl::core::ConsommeNetworkingFlags::LocalhostRelay, m_vmConfig.EnableLocalhostRelay);
                 WI_SetFlagIf(flags, wsl::core::ConsommeNetworkingFlags::DnsTunneling, m_vmConfig.EnableDnsTunneling);
                 // NAT may have fallen back to Consomme after the early-config message; drop the unused DNS hvsocket.
@@ -732,18 +746,14 @@ WslCoreVm::~WslCoreVm() noexcept
         TelemetryPrivacyDataTag(PDT_ProductAndServicePerformance),
         TraceLoggingValue(m_runtimeId, "vmId"));
 
+    if (m_drvfsInitialThread.joinable())
+    {
+        m_drvfsInitialThread.join();
+    }
+
     m_networkingEngine.reset();
 
     auto lock = m_lock.lock_exclusive();
-
-    if (m_drvfsInitialResult.valid())
-    {
-        try
-        {
-            m_drvfsInitialResult.get();
-        }
-        CATCH_LOG()
-    }
 
     // Clear out the exit callback.
     {
@@ -1608,13 +1618,20 @@ std::wstring WslCoreVm::GenerateConfigJson()
                 m_vmConfig.EnableNestedVirtualization = false;
             }
 
-            vmSettings.ComputeTopology.Processor.ExposeVirtualizationExtensions = m_vmConfig.EnableNestedVirtualization;
             if (!m_vmConfig.EnableNestedVirtualization)
             {
                 EMIT_USER_WARNING(wsl::shared::Localization::MessageNestedVirtualizationNotSupported());
             }
         }
-        CATCH_LOG()
+        catch (...)
+        {
+            LOG_CAUGHT_EXCEPTION();
+            m_vmConfig.EnableNestedVirtualization = false;
+            EMIT_USER_WARNING(wsl::shared::Localization::MessageNestedVirtualizationDetectionFailed(
+                wsl::windows::common::wslutil::ErrorCodeToString(wil::ResultFromCaughtException())));
+        }
+
+        vmSettings.ComputeTopology.Processor.ExposeVirtualizationExtensions = m_vmConfig.EnableNestedVirtualization;
     }
 
 #ifdef _AMD64_
@@ -2445,11 +2462,13 @@ void WslCoreVm::ReadGuestCapabilities()
     }
 
     m_seccompAvailable = info.SeccompAvailable;
+    m_ipv6Available = info.Ipv6Available;
     m_hvPciSwiotlbBase = info.HvPciSwiotlbBase;
     m_hvPciSwiotlbSize = info.HvPciSwiotlbSize;
     WSL_LOG(
         "GuestKernelInfo",
         TraceLoggingValue(m_seccompAvailable, "SeccompAvailable"),
+        TraceLoggingValue(m_ipv6Available, "Ipv6Available"),
         TraceLoggingValue(m_hvPciSwiotlbBase, "HvPciSwiotlbBase"),
         TraceLoggingValue(m_hvPciSwiotlbSize, "HvPciSwiotlbSize"),
         TraceLoggingValue(std::get<0>(m_kernelVersion), "Version"),
@@ -2545,11 +2564,7 @@ void WslCoreVm::RegisterCallbacks(_In_ const std::function<void(ULONG)>& DistroE
         }
         else
         {
-            // The VM has already been terminated, invoke the callback on a separate thread.
-            std::thread([terminationCallback = std::move(TerminationCallback), runtimeId = m_runtimeId]() {
-                wsl::windows::common::wslutil::SetThreadDescription(L"TerminationCallback");
-                terminationCallback(runtimeId);
-            }).detach();
+            TerminationCallback(m_runtimeId);
         }
     }
 

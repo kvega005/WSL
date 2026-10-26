@@ -251,6 +251,12 @@ Abstract:
 
 #define LX_INIT_WSLC_GPU_HOOK "wsl-gpu-hook"
 
+#define LX_INIT_WSLC_GPU_START_HOOK "wsl-gpu-start-hook"
+
+// Where init is copied inside GPU containers, so that the startContainer hook can run it.
+#define LX_INIT_WSLC_GPU_START_HOOK_DIRECTORY "/.wslc-gpu-hook"
+#define LX_INIT_WSLC_GPU_START_HOOK_PATH LX_INIT_WSLC_GPU_START_HOOK_DIRECTORY "/init"
+
 #define LX_WSLC_CDI_KIND "microsoft.com/wslc"
 #define LX_WSLC_GPU_CDI_DEVICE LX_WSLC_CDI_KIND "=gpu"
 
@@ -265,8 +271,6 @@ Abstract:
 #define LX_WSL2_KERNEL_MODULES_PATH_ENV "WSL2_KERNEL_MODULES_PATH"
 #define LX_WSL2_KERNEL_HEADERS_MOUNT_ENV "WSL2_KERNEL_HEADERS_MOUNT"
 #define LX_WSL2_KERNEL_HEADERS_PATH_ENV "WSL2_KERNEL_HEADERS_PATH"
-#define LX_WSL2_KERNEL_PERF_MOUNT_ENV "WSL2_KERNEL_PERF_MOUNT"
-#define LX_WSL2_KERNEL_PERF_PATH_ENV "WSL2_KERNEL_PERF_PATH"
 #define LX_WSL2_SYSTEM_DISTRO_SHARE_ENV "WSL2_SYSTEM_DISTRO_SHARE"
 #define LX_WSL2_GPU_SHARE_ENV "WSL2_GPU_SHARE_ENV_"
 #define LX_WSL2_SHARED_MEMORY_OB_DIRECTORY "WSL2_SHARED_MEMORY_OB_DIRECTORY"
@@ -1501,11 +1505,12 @@ typedef struct _LX_INIT_GUEST_CAPABILITIES
 
     MESSAGE_HEADER Header;
     bool SeccompAvailable;
+    bool Ipv6Available;
     uint64_t HvPciSwiotlbBase;
     uint64_t HvPciSwiotlbSize;
     char Buffer[]; // Contains the kernel version string
 
-    PRETTY_PRINT(FIELD(Header), FIELD(SeccompAvailable), FIELD(HvPciSwiotlbBase), FIELD(HvPciSwiotlbSize), BUFFER_FIELD(Buffer));
+    PRETTY_PRINT(FIELD(Header), FIELD(SeccompAvailable), FIELD(Ipv6Available), FIELD(HvPciSwiotlbBase), FIELD(HvPciSwiotlbSize), BUFFER_FIELD(Buffer));
 } LX_INIT_GUEST_CAPABILITIES, *PLX_INIT_GUEST_CAPABILITIES;
 
 typedef struct _LX_MINI_INIT_WAIT_FOR_PMEM_DEVICE_MESSAGE
